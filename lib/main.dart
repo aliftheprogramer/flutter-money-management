@@ -24,9 +24,9 @@ class MyApp extends StatelessWidget {
       title: 'Money Management',
       theme: ThemeData.dark().copyWith(
         primaryColor: Colors.blue,
-        scaffoldBackgroundColor: const Color.fromARGB(255, 41, 40, 40),
+        scaffoldBackgroundColor: const Color(0xFF1A202C),
       ),
-      initialRoute: '/main',
+      initialRoute: '/login',
       routes: {
         '/login': (context) => LoginScreen(),
         '/register': (context) => RegisterScreen(),
