@@ -35,6 +35,18 @@ class _NavbarContainerState extends State<NavbarContainer> {
   Widget build(BuildContext context) {
     Logger().i("Building NavbarContainer with current index: $_currentIndex");
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Money Management'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Logger().i("Settings button tapped");
+              // Navigate to settings screen or perform an action
+            },
+          ),
+        ],
+      ),
       body: _screens[_currentIndex],
       bottomNavigationBar: CustomBottomNavbar(
         currentIndex: _currentIndex,

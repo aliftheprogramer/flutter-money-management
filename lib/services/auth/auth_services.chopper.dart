@@ -19,9 +19,9 @@ final class _$AuthServices extends AuthServices {
   final Type definitionType = AuthServices;
 
   @override
-  Future<Response<dynamic>> login(LoginRequest loginRequst) {
+  Future<Response<dynamic>> login(LoginRequest loginRequest) {
     final Uri $url = Uri.parse('api/auth/login');
-    final $body = loginRequst;
+    final $body = loginRequest;
     final Request $request = Request('POST', $url, client.baseUrl, body: $body);
     return client.send<dynamic, dynamic>($request);
   }
@@ -31,6 +31,13 @@ final class _$AuthServices extends AuthServices {
     final Uri $url = Uri.parse('api/auth/register');
     final $body = registerRequest;
     final Request $request = Request('POST', $url, client.baseUrl, body: $body);
+    return client.send<dynamic, dynamic>($request);
+  }
+
+  @override
+  Future<Response<dynamic>> getUserInfo() {
+    final Uri $url = Uri.parse('api/auth/me');
+    final Request $request = Request('GET', $url, client.baseUrl);
     return client.send<dynamic, dynamic>($request);
   }
 }

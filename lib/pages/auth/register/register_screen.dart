@@ -376,6 +376,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       onPressed: () {
                         // Navigasi ke halaman login
                         Logger().i('Navigasi ke halaman login');
+                        Navigator.pushNamed(context, '/login');
                       },
                       style: TextButton.styleFrom(
                         foregroundColor: const Color(0xFF64B6EE), // Light blue
