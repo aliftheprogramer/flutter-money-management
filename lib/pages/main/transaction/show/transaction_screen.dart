@@ -5,8 +5,9 @@ import 'package:money_management/core/color.dart';
 import 'package:money_management/models/response/auth/summary_response.dart';
 import 'package:money_management/models/response/transaction/transaction_response.dart';
 import 'package:money_management/services/main/transaction_services.dart';
-import 'package:money_management/services/main/user_services.dart'; // Add this import
+import 'package:money_management/services/main/user_services.dart';
 import 'package:money_management/pages/main/transaction/add/add_transaction_screen.dart';
+import 'package:money_management/pages/main/transaction/detail/transaction_detail_screen.dart';
 
 class TransactionsScreen extends StatefulWidget {
   final String userId;
@@ -24,7 +25,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   String _selectedTransactionType = 'Pemasukan';
 
   late TransactionServices _transactionServices;
-  late UserServices _userServices; // Add this
+  late UserServices _userServices;
 
   bool _isLoading = true;
   bool _hasError = false;
@@ -675,24 +676,44 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         final transaction = filteredTransactions[index];
         final isIncome = transaction.type == 'pemasukan';
 
-        return _buildTransactionItem(
-          icon: isIncome ? Icons.arrow_upward : Icons.arrow_downward,
-          iconColor: isIncome ? AppColors.successColor : AppColors.dangerColor,
-          iconBgColor: isIncome
-              ? AppColors.successColor.withOpacity(0.2)
-              : AppColors.dangerColor.withOpacity(0.2),
-          title: transaction.transactionName,
-          subtitle: transaction.category,
-          amount:
-              '${isIncome ? '+' : '-'}Rp ${_formatNumberCurrency(transaction.amount)}',
-          amountColor: isIncome
-              ? AppColors.successColor
-              : AppColors.dangerColor,
-          date:
-              '${transaction.date.day}/${transaction.date.month}/${transaction.date.year}',
+        return GestureDetector(
+          onTap: () => _navigateToTransactionDetail(transaction),
+          child: _buildTransactionItem(
+            icon: isIncome ? Icons.arrow_upward : Icons.arrow_downward,
+            iconColor: isIncome
+                ? AppColors.successColor
+                : AppColors.dangerColor,
+            iconBgColor: isIncome
+                ? AppColors.successColor.withOpacity(0.2)
+                : AppColors.dangerColor.withOpacity(0.2),
+            title: transaction.transactionName,
+            subtitle: transaction.category,
+            amount:
+                '${isIncome ? '+' : '-'}Rp ${_formatNumberCurrency(transaction.amount)}',
+            amountColor: isIncome
+                ? AppColors.successColor
+                : AppColors.dangerColor,
+            date:
+                '${transaction.date.day}/${transaction.date.month}/${transaction.date.year}',
+          ),
         );
       },
     );
+  }
+
+  // Add this method to handle navigation to transaction detail
+  void _navigateToTransactionDetail(TransactionResponse transaction) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TransactionDetailScreen(transaction: transaction),
+      ),
+    ).then((refreshNeeded) {
+      // Refresh data if transaction was modified or deleted
+      if (refreshNeeded == true) {
+        _fetchData();
+      }
+    });
   }
 
   // Helper method to format number as currency

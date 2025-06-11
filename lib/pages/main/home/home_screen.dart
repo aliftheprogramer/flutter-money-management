@@ -4,10 +4,11 @@ import 'package:money_management/core/color.dart';
 import 'package:money_management/models/response/auth/summary_response.dart';
 import 'package:money_management/models/response/transaction/transaction_response.dart';
 import 'package:money_management/pages/main/transaction/add/add_transaction_screen.dart';
+import 'package:money_management/pages/main/transaction/detail/transaction_detail_screen.dart'; // Add this import
 import 'package:money_management/services/auth/token_services.dart';
 import 'package:money_management/services/main/summary_services.dart';
 import 'package:money_management/services/main/transaction_services.dart';
-import 'package:money_management/services/main/user_services.dart'; // Add this import
+import 'package:money_management/services/main/user_services.dart';
 import 'package:money_management/utils/custom_toast.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -483,25 +484,29 @@ class _HomeScreenState extends State<HomeScreen> {
                             final transaction = _transactionList[index];
                             final isIncome = transaction.type == 'pemasukan';
 
-                            return buildTransactionItem(
-                              icon: isIncome
-                                  ? Icons.arrow_upward
-                                  : Icons.arrow_downward,
-                              iconColor: isIncome
-                                  ? AppColors.successColor
-                                  : AppColors.dangerColor,
-                              iconBgColor: isIncome
-                                  ? AppColors.successColor.withOpacity(0.2)
-                                  : AppColors.dangerColor.withOpacity(0.2),
-                              title: transaction.transactionName,
-                              subtitle: transaction.category,
-                              amount:
-                                  '${isIncome ? '+' : '-'}Rp ${_formatCurrency(transaction.amount)}',
-                              amountColor: isIncome
-                                  ? AppColors.successColor
-                                  : AppColors.dangerColor,
-                              date:
-                                  '${transaction.date.day}/${transaction.date.month}/${transaction.date.year}',
+                            return GestureDetector(
+                              onTap: () =>
+                                  _navigateToTransactionDetail(transaction),
+                              child: buildTransactionItem(
+                                icon: isIncome
+                                    ? Icons.arrow_upward
+                                    : Icons.arrow_downward,
+                                iconColor: isIncome
+                                    ? AppColors.successColor
+                                    : AppColors.dangerColor,
+                                iconBgColor: isIncome
+                                    ? AppColors.successColor.withOpacity(0.2)
+                                    : AppColors.dangerColor.withOpacity(0.2),
+                                title: transaction.transactionName,
+                                subtitle: transaction.category,
+                                amount:
+                                    '${isIncome ? '+' : '-'}Rp ${_formatCurrency(transaction.amount)}',
+                                amountColor: isIncome
+                                    ? AppColors.successColor
+                                    : AppColors.dangerColor,
+                                date:
+                                    '${transaction.date.day}/${transaction.date.month}/${transaction.date.year}',
+                              ),
                             );
                           },
                         ),
@@ -605,5 +610,20 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  // Add this method to handle navigation to transaction detail
+  void _navigateToTransactionDetail(TransactionResponse transaction) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TransactionDetailScreen(transaction: transaction),
+      ),
+    ).then((refreshNeeded) {
+      // Refresh data if transaction was modified or deleted
+      if (refreshNeeded == true) {
+        _fetchData();
+      }
+    });
   }
 }
