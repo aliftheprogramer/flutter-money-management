@@ -1,10 +1,8 @@
-import 'package:chopper/chopper.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
 import 'package:money_management/models/request/auth/register_request.dart';
 import 'package:money_management/models/response/auth/auth_response.dart';
 import 'package:money_management/services/auth/auth_services.dart';
-import 'package:money_management/services/auth/token_services.dart';
 import 'package:money_management/utils/custom_toast.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -44,8 +42,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String? _validateEmail(String? value) {
     if (value == null || value.isEmpty) {
-      return 'Email tidak boleh kosong';
       Logger().w('Email tidak boleh kosong');
+      return 'Email tidak boleh kosong';
     }
     if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
       return 'Format email tidak valid';

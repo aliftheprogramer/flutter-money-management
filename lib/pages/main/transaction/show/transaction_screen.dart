@@ -4,7 +4,6 @@ import 'package:logger/logger.dart';
 import 'package:money_management/core/color.dart';
 import 'package:money_management/models/response/auth/summary_response.dart';
 import 'package:money_management/models/response/transaction/transaction_response.dart';
-import 'package:money_management/services/main/summary_services.dart';
 import 'package:money_management/services/main/transaction_services.dart';
 import 'package:money_management/services/main/user_services.dart'; // Add this import
 import 'package:money_management/pages/main/transaction/add/add_transaction_screen.dart';
@@ -25,14 +24,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   String _selectedTransactionType = 'Pemasukan';
 
   late TransactionServices _transactionServices;
-  late SummaryServices _summaryServices;
   late UserServices _userServices; // Add this
 
   bool _isLoading = true;
   bool _hasError = false;
   List<TransactionResponse> _transactionList = [];
   SummaryResponse? _summaryData;
-  List<MonthlySummary>? _monthlySummary;
   Map<String, dynamic>? _userData; // Add this for user profile data
 
   @override
@@ -47,7 +44,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         "Initializing transaction services with userId: ${widget.userId}",
       );
       _transactionServices = await TransactionServices.create();
-      _summaryServices = await SummaryServices.create();
       _userServices = await UserServices.create(); // Add this
       await _fetchData();
     } catch (e) {
@@ -134,7 +130,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         }
 
         setState(() {
-          _monthlySummary = _summaryData?.monthlySummary ?? [];
           _transactionList = transactionsList;
           _isLoading = false;
         });
@@ -142,7 +137,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         // Set empty data instead of throwing error
         setState(() {
           _summaryData = null;
-          _monthlySummary = [];
           _transactionList = [];
           _userData = null;
           _isLoading = false;
@@ -154,7 +148,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         _hasError = false; // Don't show error state, just empty data
         _isLoading = false;
         _summaryData = null;
-        _monthlySummary = [];
         _transactionList = [];
         _userData = null;
       });
