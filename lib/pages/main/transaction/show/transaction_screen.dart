@@ -1,32 +1,39 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:logger/logger.dart';
 import 'package:money_management/core/color.dart';
 import 'package:money_management/models/response/auth/summary_response.dart';
 import 'package:money_management/models/response/transaction/transaction_response.dart';
 import 'package:money_management/services/main/summary_services.dart';
 import 'package:money_management/services/main/transaction_services.dart';
+import 'package:money_management/services/main/user_services.dart'; // Add this import
+import 'package:money_management/pages/main/transaction/add/add_transaction_screen.dart';
 
 class TransactionsScreen extends StatefulWidget {
-  const TransactionsScreen({super.key});
+  final String userId;
+
+  const TransactionsScreen({super.key, required this.userId});
 
   @override
   State<TransactionsScreen> createState() => _TransactionsScreenState();
 }
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
+  final Logger _logger = Logger();
   String _selectedPeriod = 'Mingguan';
   final List<String> _periods = ['Mingguan', 'Bulanan', 'Tahunan'];
   String _selectedTransactionType = 'Pemasukan';
 
   late TransactionServices _transactionServices;
   late SummaryServices _summaryServices;
-  String? _userId;
+  late UserServices _userServices; // Add this
 
   bool _isLoading = true;
   bool _hasError = false;
   List<TransactionResponse> _transactionList = [];
   SummaryResponse? _summaryData;
   List<MonthlySummary>? _monthlySummary;
+  Map<String, dynamic>? _userData; // Add this for user profile data
 
   @override
   void initState() {
@@ -36,14 +43,15 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   Future<void> _initializeServices() async {
     try {
+      _logger.i(
+        "Initializing transaction services with userId: ${widget.userId}",
+      );
       _transactionServices = await TransactionServices.create();
       _summaryServices = await SummaryServices.create();
-
-      // For demo, we'll use a hardcoded user ID - in production this would come from auth
-      _userId = "683b6a385f5a412f3de62a08";
-
+      _userServices = await UserServices.create(); // Add this
       await _fetchData();
     } catch (e) {
+      _logger.e("Error initializing services: $e");
       setState(() {
         _hasError = true;
         _isLoading = false;
@@ -54,41 +62,101 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   Future<void> _fetchData() async {
     setState(() {
       _isLoading = true;
+      _hasError = false;
     });
 
     try {
-      // Fetch summary data
-      final summaryResponse = await _summaryServices.getSummary(_userId!);
-      if (summaryResponse.isSuccessful && summaryResponse.body != null) {
-        final summaryData = SummaryResponse.fromJson(summaryResponse.body);
+      // Use the same method as home and profile screens
+      final userResponse = await _userServices.getUserProfile(widget.userId);
+
+      if (userResponse.isSuccessful && userResponse.body != null) {
+        _userData = userResponse.body;
+
+        // Extract summary data from user profile response
+        final stats = _userData!['stats'];
+        if (stats != null) {
+          // Create a mock SummaryResponse from the stats data
+          final summaryData = SummaryResponse(
+            summary: Summary(
+              pemasukan: TransactionTypeSummary(
+                total: stats['pemasukan']['total'] ?? 0,
+                count: stats['pemasukan']['count'] ?? 0,
+              ),
+              pengeluaran: TransactionTypeSummary(
+                total: stats['pengeluaran']['total'] ?? 0,
+                count: stats['pengeluaran']['count'] ?? 0,
+              ),
+            ),
+            monthlySummary:
+                [], // Will be populated from monthly data if available
+            debug: DebugInfo(
+              requestedUserId: widget.userId,
+              tokenUserId: widget.userId,
+              transactionsExist: TransactionExist(id: widget.userId),
+            ),
+          );
+
+          // Try to get monthly summary data if available
+          List<MonthlySummary> monthlySummaryList = [];
+          if (_userData!['monthlySummary'] != null) {
+            final monthlyData = _userData!['monthlySummary'] as List;
+            monthlySummaryList = monthlyData
+                .map((item) => MonthlySummary.fromJson(item))
+                .toList();
+          }
+
+          // Update the summary data with monthly summary
+          _summaryData = SummaryResponse(
+            summary: summaryData.summary,
+            monthlySummary: monthlySummaryList,
+            debug: summaryData.debug,
+          );
+        }
 
         // Fetch transactions
         final transactionsResponse = await _transactionServices
             .getAllTransactionsByDate();
+
+        List<TransactionResponse> transactionsList = [];
         if (transactionsResponse.isSuccessful &&
-            transactionsResponse.body != null) {
+            transactionsResponse.body != null &&
+            transactionsResponse.body is Map<String, dynamic> &&
+            transactionsResponse.body['transactions'] != null) {
           final transactions =
               transactionsResponse.body['transactions'] as List;
-          final transactionsList = transactions
+          transactionsList = transactions
               .map((item) => TransactionResponse.fromJson(item))
               .toList();
-
-          setState(() {
-            _summaryData = summaryData;
-            _monthlySummary = summaryData.monthlySummary;
-            _transactionList = transactionsList;
-            _isLoading = false;
-          });
         } else {
-          throw Exception('Failed to fetch transactions');
+          _logger.w(
+            "Transaction response doesn't contain expected data structure",
+          );
         }
+
+        setState(() {
+          _monthlySummary = _summaryData?.monthlySummary ?? [];
+          _transactionList = transactionsList;
+          _isLoading = false;
+        });
       } else {
-        throw Exception('Failed to fetch summary data');
+        // Set empty data instead of throwing error
+        setState(() {
+          _summaryData = null;
+          _monthlySummary = [];
+          _transactionList = [];
+          _userData = null;
+          _isLoading = false;
+        });
       }
     } catch (e) {
+      _logger.e("Error in _fetchData: $e");
       setState(() {
-        _hasError = true;
+        _hasError = false; // Don't show error state, just empty data
         _isLoading = false;
+        _summaryData = null;
+        _monthlySummary = [];
+        _transactionList = [];
+        _userData = null;
       });
     }
   }
@@ -121,231 +189,299 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       );
     }
 
+    // Check if we have any data at all
+    final hasData = _summaryData != null || _transactionList.isNotEmpty;
+
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
       body: RefreshIndicator(
         onRefresh: _fetchData,
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          child: hasData ? _buildMainContent() : _buildEmptyState(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.bar_chart,
+              size: 64,
+              color: AppColors.secondaryTextColor.withOpacity(0.5),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Belum ada data transaksi',
+              style: TextStyle(
+                color: AppColors.textColor,
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Mulai kelola keuangan Anda dengan\nmenambahkan transaksi pertama',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppColors.secondaryTextColor,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Period selector
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.cardColor,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Periode: ',
-                        style: TextStyle(
-                          color: AppColors.secondaryTextColor,
-                          fontSize: 14,
-                        ),
-                      ),
-                      DropdownButton<String>(
-                        value: _selectedPeriod,
-                        icon: Icon(
-                          Icons.keyboard_arrow_down,
-                          color: AppColors.textColor,
-                        ),
-                        elevation: 16,
-                        style: TextStyle(color: AppColors.textColor),
-                        underline: Container(height: 0),
-                        dropdownColor: AppColors.cardColor,
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedPeriod = newValue!;
-                          });
-                        },
-                        items: _periods.map<DropdownMenuItem<String>>((
-                          String value,
-                        ) {
-                          return DropdownMenuItem<String>(
-                            value: value,
-                            child: Text(value),
-                          );
-                        }).toList(),
-                      ),
-                    ],
+                ElevatedButton.icon(
+                  onPressed: () => _navigateToAddTransaction(true),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Pemasukan'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.successColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                   ),
                 ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: () => _navigateToAddTransaction(false),
+                  icon: const Icon(Icons.remove, size: 16),
+                  label: const Text('Pengeluaran'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.dangerColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-                const SizedBox(height: 24),
-
-                // Chart title
+  Widget _buildMainContent() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Period selector
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.cardColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 Text(
-                  'Statistik Transaksi',
+                  'Periode: ',
                   style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                    color: AppColors.secondaryTextColor,
+                    fontSize: 14,
+                  ),
+                ),
+                DropdownButton<String>(
+                  value: _selectedPeriod,
+                  icon: Icon(
+                    Icons.keyboard_arrow_down,
                     color: AppColors.textColor,
                   ),
+                  elevation: 16,
+                  style: TextStyle(color: AppColors.textColor),
+                  underline: Container(height: 0),
+                  dropdownColor: AppColors.cardColor,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedPeriod = newValue!;
+                    });
+                  },
+                  items: _periods.map<DropdownMenuItem<String>>((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(value),
+                    );
+                  }).toList(),
                 ),
-
-                const SizedBox(height: 16),
-
-                // Chart card - using the actual data
-                Container(
-                  height: 250,
-                  padding: const EdgeInsets.all(16.0),
-                  decoration: BoxDecoration(
-                    color: AppColors.cardColor,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Chart legend
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _buildLegendItem(AppColors.successColor, 'Pemasukan'),
-                          const SizedBox(width: 24),
-                          _buildLegendItem(
-                            AppColors.dangerColor,
-                            'Pengeluaran',
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Chart with real data
-                      Expanded(
-                        child: BarChart(
-                          BarChartData(
-                            alignment: BarChartAlignment.spaceAround,
-                            maxY: _calculateMaxY(),
-                            barTouchData: BarTouchData(
-                              enabled: true,
-                              touchTooltipData: BarTouchTooltipData(
-                                tooltipPadding: const EdgeInsets.all(8),
-                                tooltipMargin: 8,
-                                getTooltipItem:
-                                    (
-                                      BarChartGroupData group,
-                                      int groupIndex,
-                                      BarChartRodData rod,
-                                      int rodIndex,
-                                    ) {
-                                      String label = rodIndex == 0
-                                          ? 'Pemasukan: '
-                                          : 'Pengeluaran: ';
-                                      return BarTooltipItem(
-                                        '$label\nRp ${(rod.toY / 1000).round()}K',
-                                        TextStyle(
-                                          color: rodIndex == 0
-                                              ? AppColors.successColor
-                                              : AppColors.dangerColor,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      );
-                                    },
-                              ),
-                            ),
-                            titlesData: FlTitlesData(
-                              show: true,
-                              bottomTitles: AxisTitles(
-                                sideTitles: SideTitles(
-                                  showTitles: true,
-                                  getTitlesWidget: (value, meta) {
-                                    return Text(
-                                      _getBottomTitle(value.toInt()),
-                                      style: TextStyle(
-                                        color: AppColors.secondaryTextColor,
-                                        fontSize: 12,
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              leftTitles: AxisTitles(
-                                sideTitles: SideTitles(
-                                  showTitles: true,
-                                  reservedSize: 40,
-                                  getTitlesWidget: (value, meta) {
-                                    return Text(
-                                      _formatCurrency(value),
-                                      style: TextStyle(
-                                        color: AppColors.secondaryTextColor,
-                                        fontSize: 10,
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              rightTitles: AxisTitles(
-                                sideTitles: SideTitles(showTitles: false),
-                              ),
-                              topTitles: AxisTitles(
-                                sideTitles: SideTitles(showTitles: false),
-                              ),
-                            ),
-                            borderData: FlBorderData(show: false),
-                            gridData: FlGridData(show: false),
-                            barGroups: _getBarGroups(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Transaction type tabs
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.cardColor,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _buildTransactionTypeTab(
-                          'Pemasukan',
-                          AppColors.successColor,
-                        ),
-                      ),
-                      Expanded(
-                        child: _buildTransactionTypeTab(
-                          'Pengeluaran',
-                          AppColors.dangerColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // Transaction list title (dynamically shows selected type)
-                Text(
-                  _selectedTransactionType,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textColor,
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                // Transactions list (filtered by type)
-                Expanded(child: _buildTransactionList()),
               ],
             ),
           ),
-        ),
+
+          const SizedBox(height: 24),
+
+          // Chart title
+          Text(
+            'Statistik Transaksi',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textColor,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Chart card - using the actual data
+          Container(
+            height: 250,
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: AppColors.cardColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Chart legend
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildLegendItem(AppColors.successColor, 'Pemasukan'),
+                    const SizedBox(width: 24),
+                    _buildLegendItem(AppColors.dangerColor, 'Pengeluaran'),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+
+                // Chart with real data
+                Expanded(
+                  child: BarChart(
+                    BarChartData(
+                      alignment: BarChartAlignment.spaceAround,
+                      maxY: _calculateMaxY(),
+                      barTouchData: BarTouchData(
+                        enabled: true,
+                        touchTooltipData: BarTouchTooltipData(
+                          tooltipPadding: const EdgeInsets.all(8),
+                          tooltipMargin: 8,
+                          getTooltipItem:
+                              (
+                                BarChartGroupData group,
+                                int groupIndex,
+                                BarChartRodData rod,
+                                int rodIndex,
+                              ) {
+                                String label = rodIndex == 0
+                                    ? 'Pemasukan: '
+                                    : 'Pengeluaran: ';
+                                return BarTooltipItem(
+                                  '$label\nRp ${_formatCurrency(rod.toY)}',
+                                  TextStyle(
+                                    color: rodIndex == 0
+                                        ? AppColors.successColor
+                                        : AppColors.dangerColor,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                );
+                              },
+                        ),
+                      ),
+                      titlesData: FlTitlesData(
+                        show: true,
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            getTitlesWidget: (value, meta) {
+                              return Text(
+                                _getBottomTitle(value.toInt()),
+                                style: TextStyle(
+                                  color: AppColors.secondaryTextColor,
+                                  fontSize: 12,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        leftTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 40,
+                            getTitlesWidget: (value, meta) {
+                              return Text(
+                                _formatCurrency(value),
+                                style: TextStyle(
+                                  color: AppColors.secondaryTextColor,
+                                  fontSize: 10,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        rightTitles: AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        topTitles: AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      gridData: FlGridData(show: false),
+                      barGroups: _getBarGroups(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Transaction type tabs
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.cardColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _buildTransactionTypeTab(
+                    'Pemasukan',
+                    AppColors.successColor,
+                  ),
+                ),
+                Expanded(
+                  child: _buildTransactionTypeTab(
+                    'Pengeluaran',
+                    AppColors.dangerColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Transaction list title (dynamically shows selected type)
+          Text(
+            _selectedTransactionType,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textColor,
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // Transactions list (filtered by type)
+          Expanded(child: _buildTransactionList()),
+        ],
       ),
     );
   }
@@ -394,18 +530,21 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   // Calculate max Y value for chart
   double _calculateMaxY() {
-    if (_monthlySummary == null || _monthlySummary!.isEmpty) {
+    if (_summaryData == null) {
       return 5000000.0;
     }
 
     double maxValue = 0;
-    for (var summary in _monthlySummary!) {
-      if (summary.total > maxValue) {
-        maxValue = summary.total.toDouble();
-      }
+    final income = _summaryData!.summary.pemasukan.total.toDouble();
+    final expense = _summaryData!.summary.pengeluaran.total.toDouble();
+
+    maxValue = income > expense ? income : expense;
+
+    if (maxValue == 0) {
+      return 5000000.0;
     }
 
-    // Round up to nearest million for clean chart
+    // Round up to nearest significant figure for clean chart
     return ((maxValue / 1000000).ceil() * 1000000).toDouble();
   }
 
@@ -455,67 +594,17 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   // Helper method to get bar chart data
   List<BarChartGroupData> _getBarGroups() {
-    if (_monthlySummary == null || _monthlySummary!.isEmpty) {
-      // Return dummy data if no real data available
+    if (_summaryData == null) {
+      // Return single bar with zero values if no data
       return [_makeBarGroup(0, 0, 0)];
     }
 
-    // Process and group the data based on selected period
-    Map<int, Map<String, int>> groupedData = {};
+    // For now, show a simple comparison of total income vs expense
+    // You can enhance this to show actual monthly/weekly breakdown
+    final income = _summaryData!.summary.pemasukan.total.toDouble();
+    final expense = _summaryData!.summary.pengeluaran.total.toDouble();
 
-    for (var summary in _monthlySummary!) {
-      int key;
-      switch (_selectedPeriod) {
-        case 'Mingguan':
-          // For weekly, group by day of week
-          final date = DateTime(summary.year, summary.month);
-          key = date.weekday - 1; // 0-6 for Mon-Sun
-          break;
-        case 'Bulanan':
-          // For monthly, group by week of month (simplified)
-          key = ((summary.month - 1) % 4);
-          break;
-        case 'Tahunan':
-        default:
-          // For yearly, group by month
-          key = summary.month - 1; // 0-11 for Jan-Dec
-          break;
-      }
-
-      // Initialize if not exists
-      groupedData[key] ??= {'pemasukan': 0, 'pengeluaran': 0};
-
-      // Add values
-      if (summary.type == 'pemasukan') {
-        groupedData[key]!['pemasukan'] =
-            (groupedData[key]!['pemasukan'] ?? 0) + summary.total;
-      } else {
-        groupedData[key]!['pengeluaran'] =
-            (groupedData[key]!['pengeluaran'] ?? 0) + summary.total;
-      }
-    }
-
-    // Convert to bar groups
-    List<BarChartGroupData> barGroups = [];
-    for (
-      int i = 0;
-      i <
-          (_selectedPeriod == 'Mingguan'
-              ? 7
-              : (_selectedPeriod == 'Bulanan' ? 4 : 12));
-      i++
-    ) {
-      final data = groupedData[i] ?? {'pemasukan': 0, 'pengeluaran': 0};
-      barGroups.add(
-        _makeBarGroup(
-          i,
-          data['pemasukan']!.toDouble(),
-          data['pengeluaran']!.toDouble(),
-        ),
-      );
-    }
-
-    return barGroups;
+    return [_makeBarGroup(0, income, expense)];
   }
 
   // Helper method to create a bar group
@@ -526,14 +615,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         BarChartRodData(
           toY: income,
           color: AppColors.successColor,
-          width: 12,
-          borderRadius: BorderRadius.circular(2),
+          width: 16,
+          borderRadius: BorderRadius.circular(4),
         ),
         BarChartRodData(
           toY: expense,
           color: AppColors.dangerColor,
-          width: 12,
-          borderRadius: BorderRadius.circular(2),
+          width: 16,
+          borderRadius: BorderRadius.circular(4),
         ),
       ],
     );
@@ -551,9 +640,37 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
     if (filteredTransactions.isEmpty) {
       return Center(
-        child: Text(
-          'Tidak ada transaksi $_selectedTransactionType',
-          style: TextStyle(color: AppColors.secondaryTextColor),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'Tidak ada transaksi $_selectedTransactionType',
+              style: TextStyle(color: AppColors.secondaryTextColor),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () {
+                // Navigate to add transaction screen
+                _navigateToAddTransaction();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _selectedTransactionType == 'Pemasukan'
+                    ? AppColors.successColor
+                    : AppColors.dangerColor,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                'Tambah $_selectedTransactionType',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -574,7 +691,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           title: transaction.transactionName,
           subtitle: transaction.category,
           amount:
-              '${isIncome ? '+' : '-'}Rp ${transaction.amount.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
+              '${isIncome ? '+' : '-'}Rp ${_formatNumberCurrency(transaction.amount)}',
           amountColor: isIncome
               ? AppColors.successColor
               : AppColors.dangerColor,
@@ -583,6 +700,32 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         );
       },
     );
+  }
+
+  // Helper method to format number as currency
+  String _formatNumberCurrency(int value) {
+    return value.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]}.',
+    );
+  }
+
+  // Add this new method to handle navigation
+  void _navigateToAddTransaction([bool? isIncome]) {
+    final bool shouldAddIncome =
+        isIncome ?? (_selectedTransactionType == 'Pemasukan');
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddTransactionScreen(isIncome: shouldAddIncome),
+      ),
+    ).then((result) {
+      // Refresh data when returning from add transaction screen
+      if (result != null) {
+        _fetchData();
+      }
+    });
   }
 
   // Helper method to build a transaction item

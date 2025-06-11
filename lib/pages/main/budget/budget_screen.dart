@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:logger/logger.dart'; // Add this import
+import 'package:logger/logger.dart';
 import 'package:money_management/core/color.dart';
 import 'package:money_management/models/response/budget/budget_response_by_id.dart';
 import 'package:money_management/pages/main/budget/add_budget_screen.dart';
 import 'package:money_management/services/main/budget_services.dart';
 
 class BudgetScreen extends StatefulWidget {
-  const BudgetScreen({super.key});
+  final String userId;
+
+  const BudgetScreen({super.key, required this.userId});
 
   @override
   State<BudgetScreen> createState() => _BudgetScreenState();
@@ -14,11 +16,9 @@ class BudgetScreen extends StatefulWidget {
 
 class _BudgetScreenState extends State<BudgetScreen> {
   final Logger _logger = Logger();
-  // Change this to match one of your dropdown values
-  String _selectedPeriod = 'monthly'; // Changed from 'Bulanan'
+  String _selectedPeriod = 'monthly';
   final List<String> _periods = ['daily', 'weekly', 'monthly'];
 
-  // Update this map to match your new approach
   final Map<String, String> _periodDisplayNames = {
     'daily': 'Harian',
     'weekly': 'Mingguan',
@@ -32,16 +32,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   late BudgetServices _budgetServices;
 
-  final Map<String, String> _periodMapping = {
-    'Harian': 'daily',
-    'Mingguan': 'weekly',
-    'Bulanan': 'monthly',
-  };
-
   @override
   void initState() {
     super.initState();
-    _logger.i("BudgetScreen initialized");
+    _logger.i("BudgetScreen initialized with userId: ${widget.userId}");
     _initializeServices();
   }
 
@@ -66,20 +60,20 @@ class _BudgetScreenState extends State<BudgetScreen> {
   }
 
   Future<void> _fetchBudgets() async {
-    _logger.d("Fetching budgets");
+    _logger.d("Fetching budgets for user: ${widget.userId}");
     setState(() {
       _isLoading = true;
       _hasError = false;
     });
 
     try {
+      // Pass the userId to get user-specific budgets if your API supports it
       final response = await _budgetServices.getAllBudgets();
       _logger.d("Budget API response received: ${response.statusCode}");
 
       if (response.isSuccessful && response.body != null) {
         final List<dynamic> budgetsJson = response.body;
         _logger.i("Received ${budgetsJson.length} budgets from API");
-        _logger.d("Raw budget data: $budgetsJson");
 
         final budgets = budgetsJson
             .map((json) => BudgetResponse.fromJson(json))

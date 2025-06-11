@@ -44,12 +44,9 @@ class MyApp extends StatelessWidget {
           Logger().i("make navbar container for /main page");
           return NavbarContainer();
         },
-        '/main/home': (context) => HomeScreen(),
-        '/main/transactions': (context) => TransactionsScreen(),
+        '/main/home': (context) => HomeScreen(userId: ''),
         '/main/transactions/add': (context) =>
             AddTransactionScreen(isIncome: false),
-        '/main/budgets': (context) => BudgetScreen(),
-        '/main/profile': (context) => ProfileScreen(),
         '/main/profile/edit': (context) => EditProfileScreen(),
       },
     );

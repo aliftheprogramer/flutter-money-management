@@ -1,61 +1,79 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:logger/logger.dart';
 import 'package:money_management/core/color.dart';
 import 'package:money_management/models/request/budget/budget_request.dart';
+import 'package:money_management/models/response/budget/budget_response_by_id.dart';
 import 'package:money_management/services/main/budget_services.dart';
 import 'package:money_management/utils/custom_toast.dart';
-import 'package:intl/intl.dart';
 
-extension StringExtension on String {
-  String capitalize() {
-    return isEmpty ? '' : '${this[0].toUpperCase()}${substring(1)}';
-  }
-}
+class BudgetEditScreen extends StatefulWidget {
+  final BudgetResponse budget;
 
-class AddBudgetScreen extends StatefulWidget {
-  const AddBudgetScreen({super.key});
+  const BudgetEditScreen({Key? key, required this.budget}) : super(key: key);
 
   @override
-  State<AddBudgetScreen> createState() => _AddBudgetScreenState();
+  State<BudgetEditScreen> createState() => _BudgetEditScreenState();
 }
 
-class _AddBudgetScreenState extends State<AddBudgetScreen> {
+class _BudgetEditScreenState extends State<BudgetEditScreen> {
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _amountController = TextEditingController();
-  final TextEditingController _startDateController = TextEditingController();
-  final TextEditingController _endDateController = TextEditingController();
+  final Logger _logger = Logger();
 
-  String _selectedPeriod = 'daily';
-  String? _selectedCategory; // Changed to nullable for dropdown
-  bool _isLoading = false;
+  late TextEditingController _amountController;
+  late TextEditingController _categoryController;
+  late TextEditingController _startDateController;
+  late TextEditingController _endDateController;
+
+  late String _selectedPeriod;
   DateTime? _startDate;
   DateTime? _endDate;
+  bool _isLoading = false;
 
   late BudgetServices _budgetServices;
 
   final List<String> _periods = ['daily', 'weekly', 'monthly'];
 
-  // Added predefined categories
-  final List<String> _categories = [
-    'Makanan',
-    'Transportasi',
-    'Belanja',
-    'Hiburan',
-    'Kesehatan',
-    'Pendidikan',
-    'Tagihan',
-    'Lainnya',
-  ];
+  final Map<String, String> _periodDisplayNames = {
+    'daily': 'Harian',
+    'weekly': 'Mingguan',
+    'monthly': 'Bulanan',
+  };
 
   @override
   void initState() {
     super.initState();
+
+    // Initialize controllers with existing budget data
+    _amountController = TextEditingController(
+      text: widget.budget.amount.toString(),
+    );
+    _categoryController = TextEditingController(text: widget.budget.category);
+
+    _startDate = widget.budget.startDate;
+    _startDateController = TextEditingController(
+      text: DateFormat('dd-MM-yyyy').format(widget.budget.startDate),
+    );
+
+    if (widget.budget.endDate != null) {
+      _endDate = widget.budget.endDate;
+      _endDateController = TextEditingController(
+        text: DateFormat('dd-MM-yyyy').format(widget.budget.endDate!),
+      );
+    } else {
+      _endDateController = TextEditingController();
+    }
+
+    _selectedPeriod = widget.budget.period;
+
     _initializeServices();
   }
 
   @override
   void dispose() {
     _amountController.dispose();
+    _categoryController.dispose();
     _startDateController.dispose();
     _endDateController.dispose();
     super.dispose();
@@ -65,6 +83,7 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
     try {
       _budgetServices = await BudgetServices.create();
     } catch (e) {
+      _logger.e("Error initializing services", error: e);
       showToast('Failed to initialize services');
     }
   }
@@ -74,7 +93,9 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: _startDate ?? now,
-      firstDate: now,
+      firstDate: now.subtract(
+        const Duration(days: 365),
+      ), // Allow backdating up to a year
       lastDate: DateTime(now.year + 5),
       builder: (context, child) {
         return Theme(
@@ -95,6 +116,12 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
       setState(() {
         _startDate = picked;
         _startDateController.text = DateFormat('dd-MM-yyyy').format(picked);
+
+        // Reset end date if it's earlier than the new start date
+        if (_endDate != null && _endDate!.isBefore(_startDate!)) {
+          _endDate = null;
+          _endDateController.clear();
+        }
       });
     }
   }
@@ -133,13 +160,8 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
     }
   }
 
-  Future<void> _saveBudget() async {
+  Future<void> _updateBudget() async {
     if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
-    if (_selectedCategory == null) {
-      showToast('Please select a category');
       return;
     }
 
@@ -156,22 +178,26 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
       final budgetRequest = BudgetRequest(
         amount: _amountController.text,
         period: _selectedPeriod,
-        category: _selectedCategory!, // Use selected category
+        category: _categoryController.text,
         startDate: DateFormat('dd-MM-yyyy').format(_startDate!),
         endDate: _endDate != null
             ? DateFormat('dd-MM-yyyy').format(_endDate!)
             : '',
       );
 
-      final response = await _budgetServices.createBudget(budgetRequest);
+      final response = await _budgetServices.updateBudget(
+        widget.budget.id,
+        budgetRequest,
+      );
 
       if (response.isSuccessful) {
-        showToast('Budget added successfully');
-        Navigator.pop(context, true); // Return true to indicate success
+        showToast('Budget updated successfully');
+        Navigator.pop(context, true); // Return true to indicate refresh needed
       } else {
-        throw Exception('Failed to add budget: ${response.error}');
+        throw Exception('Failed to update budget: ${response.error}');
       }
     } catch (e) {
+      _logger.e("Error updating budget", error: e);
       showToast('Error: $e');
     } finally {
       setState(() {
@@ -188,7 +214,7 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
         backgroundColor: AppColors.backgroundColor,
         elevation: 0,
         title: Text(
-          'Tambah Budget',
+          'Edit Budget',
           style: TextStyle(
             color: AppColors.textColor,
             fontWeight: FontWeight.bold,
@@ -204,71 +230,37 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Category dropdown - Updated
-                _buildInputLabel('Kategori'),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: AppColors.cardColor,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.borderColor),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      dropdownColor: AppColors.cardColor,
-                      value: _selectedCategory,
-                      hint: Text(
-                        'Pilih kategori',
-                        style: TextStyle(
-                          color: AppColors.textColor.withOpacity(0.7),
-                        ),
-                      ),
-                      items: _categories.map((String category) {
-                        return DropdownMenuItem<String>(
-                          value: category,
-                          child: Row(
-                            children: [
-                              _getCategoryIcon(category),
-                              const SizedBox(width: 8),
-                              Text(
-                                category,
-                                style: TextStyle(color: AppColors.textColor),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: (String? newValue) {
-                        setState(() {
-                          _selectedCategory = newValue;
-                        });
-                      },
-                    ),
-                  ),
+                // Category field
+                _buildInputLabel('Category'),
+                _buildTextFormField(
+                  controller: _categoryController,
+                  hintText: 'e.g., Food, Transportation',
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Category cannot be empty';
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
 
                 // Amount field
-                _buildInputLabel('Jumlah Budget (IDR)'),
-                const SizedBox(height: 8),
+                _buildInputLabel('Budget Amount (IDR)'),
                 _buildTextFormField(
                   controller: _amountController,
-                  hintText: 'Masukkan jumlah budget',
+                  hintText: '0',
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  prefixText: 'Rp ',
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return 'Jumlah budget tidak boleh kosong';
+                      return 'Amount cannot be empty';
                     }
                     if (int.tryParse(value) == null) {
-                      return 'Jumlah budget harus berupa angka';
+                      return 'Amount must be a number';
                     }
                     if (int.parse(value) <= 0) {
-                      return 'Jumlah budget harus lebih dari 0';
+                      return 'Amount must be greater than 0';
                     }
                     return null;
                   },
@@ -277,8 +269,7 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
                 const SizedBox(height: 16),
 
                 // Period dropdown
-                _buildInputLabel('Periode'),
-                const SizedBox(height: 8),
+                _buildInputLabel('Period'),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
@@ -294,15 +285,9 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
                       items: _periods.map((String period) {
                         return DropdownMenuItem<String>(
                           value: period,
-                          child: Row(
-                            children: [
-                              _getPeriodIcon(period),
-                              const SizedBox(width: 8),
-                              Text(
-                                _getPeriodLabel(period),
-                                style: TextStyle(color: AppColors.textColor),
-                              ),
-                            ],
+                          child: Text(
+                            _periodDisplayNames[period] ?? period.capitalize(),
+                            style: TextStyle(color: AppColors.textColor),
                           ),
                         );
                       }).toList(),
@@ -320,21 +305,17 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
                 const SizedBox(height: 16),
 
                 // Start Date field
-                _buildInputLabel('Tanggal Mulai'),
-                const SizedBox(height: 8),
+                _buildInputLabel('Start Date'),
                 GestureDetector(
                   onTap: () => _selectStartDate(context),
                   child: AbsorbPointer(
                     child: _buildTextFormField(
                       controller: _startDateController,
                       hintText: 'DD-MM-YYYY',
-                      suffixIcon: Icon(
-                        Icons.calendar_today,
-                        color: AppColors.accentColor,
-                      ),
+                      suffixIcon: const Icon(Icons.calendar_today),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
-                          return 'Tanggal mulai tidak boleh kosong';
+                          return 'Start date cannot be empty';
                         }
                         return null;
                       },
@@ -344,19 +325,15 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
 
                 const SizedBox(height: 16),
 
-                // End Date field
-                _buildInputLabel('Tanggal Berakhir (Opsional)'),
-                const SizedBox(height: 8),
+                // End Date field (optional)
+                _buildInputLabel('End Date (Optional)'),
                 GestureDetector(
                   onTap: () => _selectEndDate(context),
                   child: AbsorbPointer(
                     child: _buildTextFormField(
                       controller: _endDateController,
                       hintText: 'DD-MM-YYYY',
-                      suffixIcon: Icon(
-                        Icons.calendar_today,
-                        color: AppColors.accentColor,
-                      ),
+                      suffixIcon: const Icon(Icons.calendar_today),
                     ),
                   ),
                 ),
@@ -367,31 +344,24 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _saveBudget,
+                    onPressed: _isLoading ? null : _updateBudget,
                     style: ElevatedButton.styleFrom(
-                      foregroundColor: Colors.white,
                       backgroundColor: AppColors.accentColor,
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      textStyle: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                     child: _isLoading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
-                              ),
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text(
+                            'Save Changes',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
                             ),
-                          )
-                        : const Text('Simpan Budget'),
+                          ),
                   ),
                 ),
               ],
@@ -403,12 +373,15 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
   }
 
   Widget _buildInputLabel(String text) {
-    return Text(
-      text,
-      style: TextStyle(
-        color: AppColors.textColor,
-        fontWeight: FontWeight.bold,
-        fontSize: 14,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: AppColors.textColor,
+          fontWeight: FontWeight.bold,
+          fontSize: 14,
+        ),
       ),
     );
   }
@@ -420,7 +393,6 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
     TextInputType? keyboardType,
     String? Function(String?)? validator,
     Widget? suffixIcon,
-    String? prefixText,
   }) {
     return TextFormField(
       controller: controller,
@@ -431,8 +403,6 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
       decoration: InputDecoration(
         hintText: hintText,
         hintStyle: TextStyle(color: AppColors.textColor.withOpacity(0.7)),
-        prefixText: prefixText,
-        prefixStyle: TextStyle(color: AppColors.textColor),
         filled: true,
         fillColor: AppColors.cardColor,
         border: OutlineInputBorder(
@@ -459,80 +429,11 @@ class _AddBudgetScreenState extends State<AddBudgetScreen> {
       ),
     );
   }
+}
 
-  // Helper method to get category icons
-  Widget _getCategoryIcon(String category) {
-    IconData iconData;
-    Color iconColor;
-
-    switch (category.toLowerCase()) {
-      case 'makanan':
-        iconData = Icons.restaurant;
-        iconColor = Colors.orange;
-        break;
-      case 'transportasi':
-        iconData = Icons.directions_car;
-        iconColor = Colors.blue;
-        break;
-      case 'belanja':
-        iconData = Icons.shopping_bag;
-        iconColor = Colors.purple;
-        break;
-      case 'hiburan':
-        iconData = Icons.movie;
-        iconColor = Colors.red;
-        break;
-      case 'kesehatan':
-        iconData = Icons.medical_services;
-        iconColor = Colors.green;
-        break;
-      case 'pendidikan':
-        iconData = Icons.school;
-        iconColor = Colors.indigo;
-        break;
-      case 'tagihan':
-        iconData = Icons.receipt;
-        iconColor = Colors.grey;
-        break;
-      default:
-        iconData = Icons.more_horiz;
-        iconColor = AppColors.textColor;
-    }
-
-    return Icon(iconData, color: iconColor, size: 20);
-  }
-
-  // Helper method to get period icons
-  Widget _getPeriodIcon(String period) {
-    IconData iconData;
-    switch (period) {
-      case 'daily':
-        iconData = Icons.today;
-        break;
-      case 'weekly':
-        iconData = Icons.view_week;
-        break;
-      case 'monthly':
-        iconData = Icons.calendar_month;
-        break;
-      default:
-        iconData = Icons.schedule;
-    }
-
-    return Icon(iconData, color: AppColors.accentColor, size: 20);
-  }
-
-  // Helper method to get period labels in Indonesian
-  String _getPeriodLabel(String period) {
-    switch (period) {
-      case 'daily':
-        return 'Harian';
-      case 'weekly':
-        return 'Mingguan';
-      case 'monthly':
-        return 'Bulanan';
-      default:
-        return period.capitalize();
-    }
+// String extension for capitalization
+extension StringExtension on String {
+  String capitalize() {
+    return isEmpty ? '' : '${this[0].toUpperCase()}${substring(1)}';
   }
 }

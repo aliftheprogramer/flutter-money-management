@@ -45,6 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _validateEmail(String? value) {
     if (value == null || value.isEmpty) {
       return 'Email tidak boleh kosong';
+      Logger().w('Email tidak boleh kosong');
     }
     if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
       return 'Format email tidak valid';
@@ -100,7 +101,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
         } else {
           final errorResponse = response.error.toString();
           Logger().e('Error: $errorResponse');
-          showToast("Registrasi gagal");
+
+          // Check if the error is about existing email
+          if (response.statusCode == 409 ||
+              errorResponse.toLowerCase().contains('email already exists') ||
+              errorResponse.toLowerCase().contains('email sudah terdaftar') ||
+              errorResponse.toLowerCase().contains('duplicate')) {
+            showToast("Email sudah terdaftar. Silakan gunakan email lain.");
+
+            // Highlight the email field
+            setState(() {
+              _emailController.selection = TextSelection(
+                baseOffset: 0,
+                extentOffset: _emailController.text.length,
+              );
+            });
+          } else {
+            showToast("Registrasi gagal");
+            Logger().e('Registrasi gagal: $errorResponse');
+          }
         }
       } catch (e) {
         Logger().e('Exception during registration: $e');

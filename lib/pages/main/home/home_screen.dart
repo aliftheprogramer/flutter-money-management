@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
 import 'package:money_management/core/color.dart';
 import 'package:money_management/models/response/auth/summary_response.dart';
 import 'package:money_management/models/response/transaction/transaction_response.dart';
 import 'package:money_management/pages/main/transaction/add/add_transaction_screen.dart';
+import 'package:money_management/services/auth/token_services.dart';
 import 'package:money_management/services/main/summary_services.dart';
 import 'package:money_management/services/main/transaction_services.dart';
+import 'package:money_management/services/main/user_services.dart'; // Add this import
 import 'package:money_management/utils/custom_toast.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final String userId;
+
+  const HomeScreen({super.key, required this.userId});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -17,13 +22,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<TransactionResponse> _transactionList = [];
   SummaryResponse? _summaryData;
+  Map<String, dynamic>? _userData; // Add this for user profile data
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
 
   late TransactionServices _transactionServices;
   late SummaryServices _summaryServices;
-  String? _userId;
+  late UserServices _userServices; // Add this
+  final TokenService tokenService = TokenService();
 
   @override
   void initState() {
@@ -35,10 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       _transactionServices = await TransactionServices.create();
       _summaryServices = await SummaryServices.create();
-
-      // For demo, we'll use a hardcoded user ID - in production this would come from auth
-      _userId = "683b6a385f5a412f3de62a08";
-
+      _userServices = await UserServices.create(); // Add this
       await _fetchData();
     } catch (e) {
       setState(() {
@@ -56,38 +60,47 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      // Fetch summary data using the user ID
-      final summaryResponse = await _summaryServices.getSummary(_userId!);
-      if (summaryResponse.isSuccessful && summaryResponse.body != null) {
-        final summaryData = SummaryResponse.fromJson(summaryResponse.body);
+      // Use the same method as profile screen to get user data with wallet info
+      final userResponse = await _userServices.getUserProfile(widget.userId);
+
+      if (userResponse.isSuccessful && userResponse.body != null) {
+        _userData = userResponse.body;
 
         // Fetch recent transactions
         final transactionsResponse = await _transactionServices
             .getAllTransactionsByDate();
+
+        List<TransactionResponse> transactionsList = [];
         if (transactionsResponse.isSuccessful &&
-            transactionsResponse.body != null) {
+            transactionsResponse.body != null &&
+            transactionsResponse.body is Map<String, dynamic> &&
+            transactionsResponse.body['transactions'] != null) {
           final transactions =
               transactionsResponse.body['transactions'] as List;
-          List<TransactionResponse> transactionsList = transactions
+          transactionsList = transactions
               .map((item) => TransactionResponse.fromJson(item))
               .toList();
-
-          setState(() {
-            _summaryData = summaryData;
-            _transactionList = transactionsList;
-            _isLoading = false;
-          });
-        } else {
-          throw Exception('Failed to fetch transactions');
         }
+
+        setState(() {
+          _transactionList = transactionsList;
+          _isLoading = false;
+        });
       } else {
-        throw Exception('Failed to fetch summary data');
+        // Set empty data instead of throwing error
+        setState(() {
+          _userData = null;
+          _transactionList = [];
+          _isLoading = false;
+        });
       }
     } catch (e) {
+      Logger().e("Error in _fetchData: $e");
       setState(() {
-        _hasError = true;
-        _errorMessage = 'Error fetching data: $e';
+        _hasError = false; // Don't show error state, just empty data
         _isLoading = false;
+        _userData = null;
+        _transactionList = [];
       });
     }
   }
@@ -132,10 +145,14 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // Calculate balance
-    final income = _summaryData?.summary.pemasukan.total ?? 0;
-    final expense = _summaryData?.summary.pengeluaran.total ?? 0;
-    final balance = income - expense;
+    // Get data from user profile response (same as profile screen)
+    final stats = _userData != null ? _userData!['stats'] : null;
+    final wallet = _userData != null ? _userData!['wallet'] : null;
+
+    // Calculate balance from wallet data (same as profile screen)
+    final income = stats != null ? stats['pemasukan']['total'] ?? 0 : 0;
+    final expense = stats != null ? stats['pengeluaran']['total'] ?? 0 : 0;
+    final balance = wallet != null ? wallet['totalBalance'] ?? 0 : 0;
 
     return Scaffold(
       backgroundColor: AppColors.backgroundColor,
@@ -147,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Balance card
+                // Balance card - now using wallet balance
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(16.0),
@@ -171,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'Rp ${balance.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
+                            'Rp ${_formatCurrency(balance)}',
                             style: const TextStyle(
                               fontSize: 24.0,
                               fontWeight: FontWeight.bold,
@@ -184,7 +201,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: Colors.white,
                             ),
                             onPressed: () {
-                              // Copy to clipboard logic
                               showToast('Copied to clipboard');
                             },
                             constraints: const BoxConstraints(),
@@ -198,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 16.0),
 
-                // Income and Expense summary
+                // Income and Expense summary - using stats data
                 Row(
                   children: [
                     // Income summary
@@ -224,25 +240,27 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             const SizedBox(width: 8.0),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Pemasukan',
-                                  style: TextStyle(
-                                    fontSize: 12.0,
-                                    color: AppColors.secondaryTextColor,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Pemasukan',
+                                    style: TextStyle(
+                                      fontSize: 12.0,
+                                      color: AppColors.secondaryTextColor,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  'Rp ${income.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
-                                  style: TextStyle(
-                                    fontSize: 14.0,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.textColor,
+                                  Text(
+                                    'Rp ${_formatCurrency(income)}',
+                                    style: TextStyle(
+                                      fontSize: 14.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textColor,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ],
                         ),
@@ -274,25 +292,27 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             const SizedBox(width: 8.0),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Pengeluaran',
-                                  style: TextStyle(
-                                    fontSize: 12.0,
-                                    color: AppColors.secondaryTextColor,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Pengeluaran',
+                                    style: TextStyle(
+                                      fontSize: 12.0,
+                                      color: AppColors.secondaryTextColor,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  'Rp ${expense.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
-                                  style: TextStyle(
-                                    fontSize: 14.0,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.textColor,
+                                  Text(
+                                    'Rp ${_formatCurrency(expense)}',
+                                    style: TextStyle(
+                                      fontSize: 14.0,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textColor,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ],
                         ),
@@ -384,15 +404,74 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 12.0),
 
-                // Transaction list
+                // Transaction list with empty state
                 Expanded(
                   child: _transactionList.isEmpty
                       ? Center(
-                          child: Text(
-                            'Belum ada transaksi',
-                            style: TextStyle(
-                              color: AppColors.secondaryTextColor,
-                            ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.receipt_long,
+                                size: 64,
+                                color: AppColors.secondaryTextColor.withOpacity(
+                                  0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'Belum ada transaksi',
+                                style: TextStyle(
+                                  color: AppColors.textColor,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Mulai kelola keuangan Anda dengan\nmenambahkan pemasukan atau pengeluaran',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppColors.secondaryTextColor,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  ElevatedButton.icon(
+                                    onPressed: () =>
+                                        _navigateToAddTransaction(true),
+                                    icon: const Icon(Icons.add, size: 16),
+                                    label: const Text('Pemasukan'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.successColor,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 8,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  ElevatedButton.icon(
+                                    onPressed: () =>
+                                        _navigateToAddTransaction(false),
+                                    icon: const Icon(Icons.remove, size: 16),
+                                    label: const Text('Pengeluaran'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.dangerColor,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 8,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         )
                       : ListView.builder(
@@ -417,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               title: transaction.transactionName,
                               subtitle: transaction.category,
                               amount:
-                                  '${isIncome ? '+' : '-'}Rp ${transaction.amount.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
+                                  '${isIncome ? '+' : '-'}Rp ${_formatCurrency(transaction.amount)}',
                               amountColor: isIncome
                                   ? AppColors.successColor
                                   : AppColors.dangerColor,
@@ -432,6 +511,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  // Add the same currency formatting method as profile screen
+  String _formatCurrency(dynamic value) {
+    if (value == null) return '0';
+    final number = value is num ? value : num.tryParse(value.toString()) ?? 0;
+    return number.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]}.',
     );
   }
 

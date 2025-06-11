@@ -3,20 +3,22 @@ import 'package:logger/logger.dart';
 import 'package:money_management/core/color.dart';
 import 'package:money_management/pages/main/profile/edit_proile_screen.dart';
 import 'package:money_management/services/auth/token_services.dart';
-import 'package:money_management/services/main/user_services.dart'; // Add this import
+import 'package:money_management/services/main/user_services.dart';
 import 'package:money_management/utils/custom_toast.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final String userId;
+
+  const ProfileScreen({super.key, required this.userId});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final Logger _logger = Logger();
   final TokenService _tokenService = TokenService();
-  late UserServices _userServices; // Change from MainServices to UserServices
-  late String _userId;
+  late UserServices _userServices;
 
   bool _isLoading = true;
   Map<String, dynamic>? _userData;
@@ -24,37 +26,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    _logger.i("ProfileScreen initialized with userId: ${widget.userId}");
     _initializeServices();
   }
 
   Future<void> _initializeServices() async {
     try {
       _userServices = await UserServices.create();
-
-      // Get user ID from token with better error handling
-      final tokenData = await _tokenService.getDecodedToken();
-      Logger().d("Token data: $tokenData"); // Log the entire token data
-
-      // Try different possible ID field names in the token
-      _userId =
-          tokenData['userId'] ??
-          tokenData['id'] ??
-          tokenData['sub'] ??
-          tokenData['_id'] ??
-          '';
-
-      Logger().d("Extracted user ID: $_userId");
-
-      if (_userId.isEmpty) {
-        // For debugging - if you know your user ID, you can hardcode it temporarily
-        _userId =
-            "683b6a385f5a412f3de62a08"; // Your test user ID from the example
-        Logger().w("Using hardcoded user ID for testing: $_userId");
-      }
-
       await _fetchUserProfile();
     } catch (e) {
-      Logger().e("Error initializing services: $e");
+      _logger.e("Error initializing services: $e");
       setState(() {
         _isLoading = false;
       });
@@ -63,27 +44,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _fetchUserProfile() async {
     try {
-      if (_userId.isEmpty) {
-        throw Exception("User ID is required");
-      }
-
-      final response = await _userServices.getUserProfile(_userId);
-      Logger().d("Profile API response code: ${response.statusCode}");
+      _logger.d("Fetching profile for user ID: ${widget.userId}");
+      final response = await _userServices.getUserProfile(widget.userId);
+      _logger.d("Profile API response code: ${response.statusCode}");
 
       if (response.isSuccessful && response.body != null) {
         setState(() {
           _userData = response.body;
           _isLoading = false;
         });
-        Logger().i("Profile fetched successfully");
+        _logger.i("Profile fetched successfully");
       } else {
-        Logger().e("Failed to fetch profile: ${response.error}");
+        _logger.e("Failed to fetch profile: ${response.error}");
         setState(() {
           _isLoading = false;
         });
       }
     } catch (e) {
-      Logger().e("Error fetching profile: $e");
+      _logger.e("Error fetching profile: $e");
       setState(() {
         _isLoading = false;
       });
@@ -92,12 +70,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // Implement logout functionality
   void _handleLogout() async {
-    Logger().i("Handling logout");
+    _logger.i("Handling logout");
     await _tokenService.deleteToken();
 
     if (!mounted) return; // Check if the widget is still mounted
-    Logger().i("Token deleted, navigating to login screen");
-    showToast("sukses logout");
+    _logger.i("Token deleted, navigating to login screen");
+    showToast("Sukses logout");
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
   }
 
